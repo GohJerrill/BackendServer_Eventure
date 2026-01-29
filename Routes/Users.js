@@ -23,46 +23,86 @@ function toClientUser(userDoc) {
 
 /* =========================
    1) STUDENT LOGIN
-   POST /Users/login-student
+   POST /User/Login_User
    ========================= */
 router.post("/Login_User", async (req, res) => {
     try {
         // Safely handle missing body
         const { email, password } = req.body || {};
 
-        if (!email || !password) {
+        // ---------- Basic type + empty checks ----------
+        if (typeof email !== "string" || typeof password !== "string") {
             return res.status(400).json({
                 success: false,
+                code: "BAD_REQUEST",
                 message: "Email and password are required",
             });
         }
 
+        const trimmedEmail = email.trim().toLowerCase();
+        const trimmedPassword = password.trim();
+
+        if (!trimmedEmail || !trimmedPassword) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_REQUEST",
+                message: "Email and password are required",
+            });
+        }
+
+        // ---------- Student email validation (mirror frontend + schema) ----------
+        const domain = "@student.tp.edu.sg";
+
+        if (!trimmedEmail.endsWith(domain)) {
+            return res.status(400).json({
+                success: false,
+                code: "INVALID_EMAIL_DOMAIN",
+                message: "Please input a valid School Email Address",
+            });
+        }
+
+        const prefix = trimmedEmail.slice(0, -domain.length); // before @student.tp.edu.sg
+        if (prefix.length !== 8) {
+            return res.status(400).json({
+                success: false,
+                code: "INVALID_EMAIL_FORMAT",
+                message: "Please input a valid School Email Address",
+            });
+        }
+
+        // ---------- Look up user ----------
         const user = await User.findOne({
-            student_email: email.toLowerCase(),
+            student_email: trimmedEmail,
         });
 
         if (!user) {
-            return res.status(400).json({
+            return res.status(401).json({
                 success: false,
+                code: "INVALID_CREDENTIALS",
                 message: "Incorrect Email or Password",
             });
         }
 
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) {
-            return res.status(400).json({
-                success: false,
-                message: "Incorrect Email or Password",
-            });
-        }
-
+        // ---------- Role gate: Students only ----------
         if (user.role !== "Student") {
             return res.status(403).json({
                 success: false,
+                code: "FORBIDDEN",
                 message: "Please login via the organiser portal",
             });
         }
 
+        // ---------- Password check ----------
+        const match = await bcrypt.compare(trimmedPassword, user.password);
+        if (!match) {
+            return res.status(401).json({
+                success: false,
+                code: "INVALID_CREDENTIALS",
+                message: "Incorrect Email or Password",
+            });
+        }
+
+        // ---------- Issue JWT ----------
         const token = await new SignJWT({
             user_id: user._id.toString(),
             email: user.student_email,
@@ -82,52 +122,77 @@ router.post("/Login_User", async (req, res) => {
         console.error("Error in Logging in User:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
             message: "Server error",
         });
     }
 });
 
 
+
 /* =========================
    2) ORGANISER LOGIN
-   POST /Users/login-organiser
+   POST /User/Login_Organiser
    ========================= */
 router.post("/Login_Organiser", async (req, res) => {
     try {
-        const { email, password } = req.body;
+        // Safely handle missing body
+        const { email, password } = req.body || {};
 
-        if (!email || !password) {
-            return res.json({
+        // ---------- Basic type + empty checks ----------
+        if (typeof email !== "string" || typeof password !== "string") {
+            return res.status(400).json({
                 success: false,
+                code: "BAD_REQUEST",
                 message: "Email and password are required",
             });
         }
 
+        const trimmedEmail = email.trim().toLowerCase();
+        const trimmedPassword = password.trim();
+
+        if (!trimmedEmail || !trimmedPassword) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_REQUEST",
+                message: "Email and password are required",
+            });
+        }
+
+        // ---------- Look up user by email ----------
         const user = await User.findOne({
-            student_email: email.toLowerCase(),
+            student_email: trimmedEmail,
         });
+
         if (!user) {
-            return res.json({
+            // Generic so attackers can't tell if email exists
+            return res.status(401).json({
                 success: false,
+                code: "INVALID_CREDENTIALS",
                 message: "Incorrect email or password",
             });
         }
 
-        const match = await bcrypt.compare(password, user.password);
+        // ---------- Password check ----------
+        const match = await bcrypt.compare(trimmedPassword, user.password);
         if (!match) {
-            return res.json({
+            return res.status(401).json({
                 success: false,
+                code: "INVALID_CREDENTIALS",
                 message: "Incorrect email or password",
             });
         }
 
+        // ---------- Role gate: Organiser or ADMIN only ----------
         if (user.role !== "Organiser" && user.role !== "ADMIN") {
-            return res.json({
+            return res.status(403).json({
                 success: false,
+                code: "FORBIDDEN",
                 message: "This portal is for organisers only",
             });
         }
 
+        // ---------- Issue JWT ----------
         const token = await new SignJWT({
             user_id: user._id.toString(),
             email: user.student_email,
@@ -146,6 +211,7 @@ router.post("/Login_Organiser", async (req, res) => {
         console.error("Error in /User/Login_Organiser:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
             message: "Server error",
         });
     }
@@ -153,44 +219,72 @@ router.post("/Login_Organiser", async (req, res) => {
 
 /* =========================
    3) ADMIN LOGIN
-   POST /Users/login-admin
+   POST /User/Login-Admin
+   ========================= */
+/* =========================
+   3) ADMIN LOGIN
+   POST /Users/Login_Admin
    ========================= */
 router.post("/Login_Admin", async (req, res) => {
     try {
-        const { email, password } = req.body;
+        // Safely handle missing body
+        const { email, password } = req.body || {};
 
-        if (!email || !password) {
-            return res.json({
+        // ---------- Basic type + empty checks ----------
+        if (typeof email !== "string" || typeof password !== "string") {
+            return res.status(400).json({
                 success: false,
+                code: "BAD_REQUEST",
                 message: "Email and password are required",
             });
         }
 
+        const trimmedEmail = email.trim().toLowerCase();
+        const trimmedPassword = password.trim();
+
+        if (!trimmedEmail || !trimmedPassword) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_REQUEST",
+                message: "Email and password are required",
+            });
+        }
+
+        // ---------- Look up user by email ----------
         const user = await User.findOne({
-            student_email: email.toLowerCase(),
+            student_email: trimmedEmail,
         });
+
         if (!user) {
-            return res.json({
+            // generic so we don't leak if email exists
+            return res.status(401).json({
                 success: false,
-                message: "Email or Password is incorrect",
+                code: "INVALID_CREDENTIALS",
+                message: "Email or password is incorrect",
             });
         }
 
-        const match = await bcrypt.compare(password, user.password);
+        // ---------- Password check ----------
+        const match = await bcrypt.compare(trimmedPassword, user.password);
         if (!match) {
-            return res.json({
+            return res.status(401).json({
                 success: false,
-                message: "Email or Password is incorrect",
+                code: "INVALID_CREDENTIALS",
+                message: "Email or password is incorrect",
             });
         }
 
-        if (user.role !== "ADMIN") {
-            return res.json({
+        // ---------- Role gate: ADMIN only ----------
+        const role = String(user.role || "").toUpperCase();
+        if (role !== "ADMIN") {
+            return res.status(403).json({
                 success: false,
+                code: "FORBIDDEN",
                 message: "This portal is for administrators only",
             });
         }
 
+        // ---------- Issue JWT ----------
         const token = await new SignJWT({
             user_id: user._id.toString(),
             email: user.student_email,
@@ -206,85 +300,20 @@ router.post("/Login_Admin", async (req, res) => {
             JWTToken: token,
         });
     } catch (err) {
-        console.error("Error in /User/Login_Admin:", err);
+        console.error("Error in /Users/Login_Admin:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
             message: "Server error",
         });
     }
 });
 
-/* =========================
-   4) LEADERBOARD
-   GET /Users/leaderboard
-   ========================= */
-
-// Check this route again: How does this route know which student is sending the data? //
-// GET /Users/Leaderboards
-// router.get("/Leaderboards", async (req, res) => {
-//     try {
-//         // =========================
-//         // 0) OPTIONAL JWT (INLINE)
-//         // =========================
-//         let meId = null;
-
-//         const authHeader = req.headers.authorization;
-//         if (authHeader?.startsWith("Bearer ")) {
-//             const token = authHeader.split(" ")[1];
-//             try {
-//                 const { payload } = await jwtVerify(token, secret);
-//                 if (payload?.user_id) meId = String(payload.user_id);
-//             } catch {
-//                 // token invalid -> just don't highlight, but still return leaderboard
-//                 meId = null;
-//             }
-//         }
-
-//         // =========================
-//         // 1) Leaderboard data
-//         // =========================
-//         const students = await User.find({ role: "Student" }).lean();
-
-//         const activeStudents = students.filter(
-//             (u) => u.createdAt && typeof u.total_points === "number"
-//         );
-
-//         const allZeroPoints =
-//             activeStudents.length > 0 &&
-//             activeStudents.every((u) => (u.total_points ?? 0) === 0);
-
-//         activeStudents.sort((a, b) => {
-//             const diff = (b.total_points ?? 0) - (a.total_points ?? 0);
-//             if (diff !== 0) return diff;
-//             return a.username.localeCompare(b.username);
-//         });
-
-//         const mapUser = (u) => ({
-//             id: u._id.toString(),
-//             username: u.username,
-//             student_email: u.student_email,
-//             profile_image: u.profile_image,
-//             total_points: u.total_points,
-//         });
-
-//         return res.json({
-//             success: true,
-//             meId, // for frontend highlight
-//             top3: activeStudents.slice(0, 3).map(mapUser),
-//             rest: activeStudents.slice(3).map(mapUser),
-//             allZeroPoints,
-//         });
-//     } catch (err) {
-//         console.error("Error in /Users/Leaderboards:", err);
-//         return res.status(500).json({ success: false, message: "Server error" });
-//     }
-// });
-
-// GET /Users/Leaderboards
+// GET /User/Leaderboards
 router.get("/Leaderboards", async (req, res) => {
     try {
         // =========================
-        // 0) OPTIONAL JWT (INLINE)
+        // 0) JWT (INLINE)
         // =========================
         let meId = null;
 
@@ -295,8 +324,13 @@ router.get("/Leaderboards", async (req, res) => {
                 const { payload } = await jwtVerify(token, secret);
                 if (payload?.user_id) meId = String(payload.user_id);
             } catch {
-                meId = null; // invalid token -> just no highlight
+                meId = null;
             }
+        }
+
+        // If meId is weird, ignore it
+        if (meId && !mongoose.Types.ObjectId.isValid(meId)) {
+            meId = null;
         }
 
         // =========================
@@ -387,7 +421,7 @@ router.get("/Leaderboards", async (req, res) => {
 
 /* =========================
    5) GET USER BY ID
-   GET /Users/:id
+   GET /User/:id
    (used by RefreshCurrentUser)
    ========================= */
 router.get("/Refresh", async (req, res) => {

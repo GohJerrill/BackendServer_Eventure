@@ -9,6 +9,8 @@ import Badge from "../Models/BadgesModel.js";
 
 import { jwtVerify } from "jose";
 
+import mongoose from "mongoose";
+
 
 const router = express.Router();
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
@@ -22,11 +24,12 @@ const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 router.get("/", async (req, res) => {
     try {
         const rewards = await Reward.find().sort({ cost: 1 }).lean();
-
-        return res.json(rewards);
+        return res.json(rewards); // keep existing shape so frontend doesn't break
     } catch (err) {
         console.error("Error fetching rewards:", err);
         return res.status(500).json({
+            success: false,
+            code: "SERVER_ERROR",
             message: "Cannot fetch rewards",
         });
     }
@@ -35,7 +38,7 @@ router.get("/", async (req, res) => {
 /**
  * POST /Rewards/Redeem
  * body: { rewardId }
- * auth: Bearer token (required)
+ * auth: Bearer token (required, Students only)
  */
 router.post("/Redeem", async (req, res) => {
     try {
@@ -56,24 +59,25 @@ router.post("/Redeem", async (req, res) => {
             const verified = await jwtVerify(token, secret);
             payload = verified.payload;
         } catch (e) {
+            console.warn("Invalid JWT in /Rewards/Redeem:", e.message);
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
-                message: "Invalid token",
+                message: "Invalid or expired token",
             });
         }
 
-        const userId = payload.user_id; // <-- your JWT field
-        if (!userId) {
+        const userId = payload.user_id; // from your JWT
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
-                message: "Token missing user id",
+                message: "Invalid token user id",
             });
         }
 
         // ===== BODY VALIDATION =====
-        const { rewardId } = req.body;
+        const { rewardId } = req.body || {};
         if (!rewardId) {
             return res.status(400).json({
                 success: false,
@@ -82,11 +86,18 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
-        // ===== LOAD USER + REWARD (cheap checks) =====
-        const [user, reward] = await Promise.all([
-            User.findById(userId).lean(),
-            Reward.findById(rewardId).lean(),
-        ]);
+        if (!mongoose.Types.ObjectId.isValid(rewardId)) {
+            return res.status(400).json({
+                success: false,
+                code: "INVALID_REWARD_ID",
+                message: "Invalid reward id",
+            });
+        }
+
+        // ===== LOAD USER (with role + points + badges) =====
+        const user = await User.findById(userId)
+            .select("role points badges")
+            .lean();
 
         if (!user) {
             return res.status(404).json({
@@ -96,6 +107,17 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
+        const roleStr = String(user.role || "").toUpperCase();
+        if (roleStr !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Only students can redeem rewards",
+            });
+        }
+
+        // ===== LOAD REWARD =====
+        const reward = await Reward.findById(rewardId).lean();
         if (!reward) {
             return res.status(404).json({
                 success: false,
@@ -104,9 +126,19 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
-        const userPoints = user.points ?? 0;
+        const rewardCost = Number(reward.cost ?? 0);
+        const rewardStock = Number(reward.stock ?? 0);
+        const userPoints = Number(user.points ?? 0);
 
-        if (reward.stock <= 0) {
+        if (!Number.isFinite(rewardCost) || rewardCost <= 0) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_REWARD_CONFIG",
+                message: "Reward cost is invalid",
+            });
+        }
+
+        if (rewardStock <= 0) {
             return res.status(409).json({
                 success: false,
                 code: "OUT_OF_STOCK",
@@ -114,7 +146,7 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
-        if (userPoints < reward.cost) {
+        if (!Number.isFinite(userPoints) || userPoints < rewardCost) {
             return res.status(409).json({
                 success: false,
                 code: "INSUFFICIENT_POINTS",
@@ -123,7 +155,8 @@ router.post("/Redeem", async (req, res) => {
         }
 
         // ===== ATOMIC UPDATES =====
-        // 1) Decrement stock atomically
+
+        // 1) Decrement stock atomically (only if stock > 0)
         const updatedReward = await Reward.findOneAndUpdate(
             { _id: rewardId, stock: { $gt: 0 } },
             { $inc: { stock: -1 } },
@@ -131,6 +164,7 @@ router.post("/Redeem", async (req, res) => {
         ).lean();
 
         if (!updatedReward) {
+            // Someone else grabbed the last one
             return res.status(409).json({
                 success: false,
                 code: "OUT_OF_STOCK",
@@ -138,10 +172,10 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
-        // 2) Deduct points atomically
+        // 2) Deduct points atomically (only if user has enough)
         const updatedUser = await User.findOneAndUpdate(
-            { _id: userId, points: { $gte: reward.cost } },
-            { $inc: { points: -reward.cost } },
+            { _id: userId, points: { $gte: rewardCost } },
+            { $inc: { points: -rewardCost } },
             { new: true }
         ).lean();
 
@@ -155,17 +189,15 @@ router.post("/Redeem", async (req, res) => {
             });
         }
 
-        // 3) Create claim record (MATCH YOUR SCHEMA)
+        // 3) Create claim record
         await ClaimedReward.create({
             user: userId,
             reward: rewardId,
         });
 
-        // ===== BADGE + NOTIFICATION CHECK (B11 at 10 claims) =====
         // ===== BADGE + NOTIFICATION CHECKS =====
         const claimCount = await ClaimedReward.countDocuments({ user: userId });
 
-        // Use your business badge id field 
         const BADGE_FIELD = "badgeId";
 
         const [rewardMerchantBadge, finalBadge, allBadges] = await Promise.all([
@@ -176,7 +208,6 @@ router.post("/Redeem", async (req, res) => {
 
         let finalUser = updatedUser;
 
-        // Helper: quickly check if user already has a badge ObjectId
         const hasBadgeObjectId = (u, badgeObjectId) =>
             (u.badges || []).some((b) => String(b.badge) === String(badgeObjectId));
 
@@ -206,17 +237,14 @@ router.post("/Redeem", async (req, res) => {
         }
 
         /* ========= B12: TP Eventure (all previous badges) ========= */
-        // Only run if final badge exists
         if (finalBadge) {
             const alreadyHasFinal = hasBadgeObjectId(finalUser, finalBadge._id);
 
             if (!alreadyHasFinal) {
-                // Build set of required badge ObjectIds (ALL badges except B12)
                 const requiredBadgeObjectIds = allBadges
                     .filter((b) => String(b._id) !== String(finalBadge._id))
                     .map((b) => String(b._id));
 
-                // Build set of user's badge ObjectIds
                 const userBadgeObjectIds = new Set(
                     (finalUser.badges || []).map((b) => String(b.badge))
                 );
@@ -249,8 +277,7 @@ router.post("/Redeem", async (req, res) => {
             }
         }
 
-
-        // Return safe user
+        // ===== RESPONSE (safe user) =====
         const { password, __v, ...safeUser } = finalUser;
 
         return res.json({
@@ -269,5 +296,6 @@ router.post("/Redeem", async (req, res) => {
         });
     }
 });
+
 
 export default router;

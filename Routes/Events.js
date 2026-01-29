@@ -1,13 +1,16 @@
 // routes/events.js
 import express from "express";
+
 import Event from "../Models/EventsModel.js";
 import RegisteredEvent from "../Models/RegisteredEventModel.js";
 import Bookmark from "../Models/BookmarksModel.js";
 import Notification from "../Models/NotificationModel.js";
-import QRCode from "qrcode";
-import mongoose from "mongoose";
 import User from "../Models/UserModel.js";
 import Badge from "../Models/BadgesModel.js";
+
+import QRCode from "qrcode";
+import mongoose from "mongoose";
+
 
 
 const router = express.Router();
@@ -180,7 +183,7 @@ async function awardBadgesForUser(user, session) {
 
 /* =========================
    1) HOMEPAGE EVENTS
-   GET /Events/
+   GET /Events
    - Only Available/Unavailable
    - Only future events
    - Adds is_registered flag
@@ -190,7 +193,10 @@ router.get("/", async (req, res) => {
     try {
         const now = new Date();
 
+        // =========================
         // 1) Fetch events (public)
+        // =========================
+        // Only upcoming events, status = Available / Unavailable
         const events = await Event.find({
             status: { $in: ["Available", "Unavailable"] },
             start_date: { $gte: now },
@@ -198,7 +204,9 @@ router.get("/", async (req, res) => {
             .sort({ start_date: 1 })
             .lean();
 
+        // =========================
         // 2) Try to extract userId from JWT (optional)
+        // =========================
         const authHeader = req.headers.authorization;
         let userId = null;
 
@@ -206,24 +214,44 @@ router.get("/", async (req, res) => {
             try {
                 const token = authHeader.split(" ")[1];
                 const { payload } = await jwtVerify(token, secret);
-                userId = payload.user_id;
-            } catch {
-                // Ignore invalid token for public route
+
+                if (payload?.user_id && typeof payload.user_id === "string") {
+                    userId = payload.user_id;
+                }
+            } catch (err) {
+                // Public route → ignore invalid token, but log for debugging
+                console.warn("Invalid JWT on GET /Events (public):", err.message);
             }
         }
 
+        // If somehow userId is weird, ignore it
+        if (userId && !mongoose.Types.ObjectId.isValid(userId)) {
+            userId = null;
+        }
+
+        // =========================
         // 3) Load registrations only if logged in
+        // =========================
         let registeredIds = new Set();
+
         if (userId) {
-            const regs = await RegisteredEvent.find({ user_id: userId }).lean();
+            const regs = await RegisteredEvent.find({ user_id: userId })
+                .select("event_id")
+                .lean();
+
             registeredIds = new Set(
-                regs.map((r) => r.event_id.toString())
+                regs
+                    .map((r) => r.event_id)
+                    .filter(Boolean)
+                    .map((id) => id.toString())
             );
         }
 
+        // =========================
         // 4) Enrich response
+        // =========================
         const enriched = events.map((e) => {
-            const base = FormatReturn(e);
+            const base = FormatReturn(e); // strips _id, __v, renames id
             return {
                 ...base,
                 is_registered: registeredIds.has(base.id),
@@ -238,6 +266,7 @@ router.get("/", async (req, res) => {
         console.error("Error in GET /Events:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
             message: "Cannot fetch events",
         });
     }
@@ -277,7 +306,7 @@ router.get("/Individual/:id", async (req, res) => {
             });
         }
 
-        // ✅ NEW: validate userId to avoid CastError
+        // validate userId to avoid CastError
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(401).json({
                 success: false,
@@ -286,7 +315,7 @@ router.get("/Individual/:id", async (req, res) => {
             });
         }
 
-        // ✅ NEW: validate event id BEFORE findById
+        // validate event id BEFORE findById
         const eventId = req.params.id;
         if (!mongoose.Types.ObjectId.isValid(eventId)) {
             return res.status(400).json({
@@ -560,8 +589,15 @@ router.get("/CalendarTodayEvents", async (req, res) => {
             _id: { $in: eventIds },
         }).lean();
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        // "Now" in server time (your dates are stored as Date so this is fine)
+        const now = new Date();
+
+        // Start and end of *today*
+        const startOfToday = new Date(now);
+        startOfToday.setHours(0, 0, 0, 0);
+
+        const endOfToday = new Date(now);
+        endOfToday.setHours(23, 59, 59, 999);
 
         const todayEvents = registrations
             .map((reg) => {
@@ -573,15 +609,14 @@ router.get("/CalendarTodayEvents", async (req, res) => {
                 const start = new Date(event.start_date);
                 const end = new Date(event.end_date);
 
-                start.setHours(0, 0, 0, 0);
-                end.setHours(0, 0, 0, 0);
+                // 1) Event overlaps today's date at all
+                const overlapsToday =
+                    start <= endOfToday && end >= startOfToday;
 
-                const isToday =
-                    start.getTime() === today.getTime() ||
-                    end.getTime() === today.getTime() ||
-                    (today >= start && today <= end);
+                // 2) Event has not completely ended yet
+                const notEnded = end >= now;
 
-                if (!isToday) return null;
+                if (!overlapsToday || !notEnded) return null;
 
                 return {
                     id: event._id.toString(),
@@ -609,6 +644,7 @@ router.get("/CalendarTodayEvents", async (req, res) => {
             message: "Cannot fetch today calendar",
         });
     }
+
 });
 
 // GET /Events/:eventId/RegistrationMe

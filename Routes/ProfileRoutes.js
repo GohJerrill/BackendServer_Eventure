@@ -208,86 +208,6 @@ router.put("/", async (req, res) => {
 });
 
 
-// router.get("/Rank", async (req, res) => {
-//     try {
-//         // ===== JWT CHECK (INLINE) =====
-//         const authHeader = req.headers.authorization;
-//         if (!authHeader?.startsWith("Bearer ")) {
-//             return res.status(401).json({
-//                 success: false,
-//                 code: "UNAUTHORIZED",
-//                 message: "Authentication required",
-//             });
-//         }
-
-//         const token = authHeader.split(" ")[1];
-
-//         let payload;
-//         try {
-//             ({ payload } = await jwtVerify(token, secret));
-//         } catch {
-//             return res.status(401).json({
-//                 success: false,
-//                 code: "UNAUTHORIZED",
-//                 message: "Invalid or expired token",
-//             });
-//         }
-
-//         const userId = payload.user_id;
-//         if (!userId) {
-//             return res.status(401).json({
-//                 success: false,
-//                 code: "UNAUTHORIZED",
-//                 message: "Token missing user id",
-//             });
-//         }
-
-//         // ===== LOAD USER + ROLE GATE =====
-//         const me = await User.findById(userId).select("_id role").lean();
-//         if (!me) {
-//             return res.status(404).json({
-//                 success: false,
-//                 code: "USER_NOT_FOUND",
-//                 message: "User not found",
-//             });
-//         }
-
-//         if (me.role !== "Student") {
-//             return res.status(403).json({
-//                 success: false,
-//                 code: "FORBIDDEN",
-//                 message: "Students only",
-//                 role: me.role,
-//             });
-//         }
-
-//         // ===== RANK LOGIC =====
-//         const students = await User.find({
-//             role: "Student",
-//             createdAt: { $exists: true },
-//         })
-//             .sort({ total_points: -1 })
-//             .select("_id")
-//             .lean();
-
-//         const rank = students.findIndex((u) => String(u._id) === String(me._id)) + 1;
-
-//         return res.json({
-//             success: true,
-//             code: "RANK_OK",
-//             rank,
-//             totalUsers: students.length,
-//         });
-//     } catch (err) {
-//         console.error("Rank fetch error:", err);
-//         return res.status(500).json({
-//             success: false,
-//             code: "SERVER_ERROR",
-//             message: "Failed to fetch rank",
-//         });
-//     }
-// });
-
 router.get("/Rank", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -581,7 +501,7 @@ router.get("/Categories", async (req, res) => {
         }
 
         // ===== LOAD USER + ROLE GATE =====
-        const user = await User.findById(userId).select("_id role attended_events").lean();
+        const user = await User.findById(userId).select("_id role").lean();
         if (!user) {
             return res.status(404).json({
                 success: false,
@@ -599,21 +519,31 @@ router.get("/Categories", async (req, res) => {
             });
         }
 
-        if (!Array.isArray(user.attended_events) || user.attended_events.length === 0) {
+        // ===== GET ATTENDED EVENTS FROM RegisteredEvent (SOURCE OF TRUTH) =====
+        const regs = await RegisteredEvent.find({
+            user_id: user._id,
+            turn_up: true, // only events they actually attended
+        })
+            .populate("event_id", "category end_date")
+            .lean();
+
+        if (!regs.length) {
             return res.json([]);
         }
 
-        // Fetch up to 3 most recent attended event docs
-        const events = await Event.find({ _id: { $in: user.attended_events } })
-            .sort({ end_date: -1 })
-            .limit(10) // read a few more so we can pick 3 unique categories
-            .select("category")
-            .lean();
+        // Sort by event end_date (latest first)
+        regs.sort((a, b) => {
+            const aDate = a.event_id?.end_date ? new Date(a.event_id.end_date) : new Date(0);
+            const bDate = b.event_id?.end_date ? new Date(b.event_id.end_date) : new Date(0);
+            return bDate - aDate; // latest first
+        });
 
+        // Pick up to 3 unique categories in order
         const categories = [];
-        for (const e of events) {
-            if (e.category && !categories.includes(e.category)) {
-                categories.push(e.category);
+        for (const reg of regs) {
+            const cat = reg.event_id?.category;
+            if (cat && !categories.includes(cat)) {
+                categories.push(cat);
             }
             if (categories.length === 3) break;
         }

@@ -127,23 +127,61 @@ router.get("/Users", async (req, res) => {
         });
     }
 
-    // ===== FETCH USERS (students only) =====
     try {
+        // ===== 1) FETCH STUDENT USERS =====
         const students = await User.find({ role: "Student" }).lean();
 
-        // sort by total_points desc
+        if (students.length === 0) {
+            return res.json({
+                success: true,
+                data: [],
+            });
+        }
+
+        // Grab all student IDs
+        const studentIds = students.map((s) => s._id);
+
+        // ===== 2) BUILD ATTENDANCE COUNTS FROM RegisteredEvent =====
+        // Count how many events each user has actually attended (turn_up: true)
+        const attendanceAgg = await RegisteredEvent.aggregate([
+            {
+                $match: {
+                    user_id: { $in: studentIds },
+                    turn_up: true,
+                },
+            },
+            {
+                $group: {
+                    _id: "$user_id",
+                    attendedCount: { $sum: 1 },
+                },
+            },
+        ]);
+
+        // Turn aggregation result into a lookup map
+        const attendanceMap = new Map();
+        attendanceAgg.forEach((row) => {
+            attendanceMap.set(row._id.toString(), row.attendedCount);
+        });
+
+        // ===== 3) SORT BY total_points DESC =====
         students.sort((a, b) => (b.total_points || 0) - (a.total_points || 0));
 
-        // format for frontend
-        const formattedUsers = students.map((u) => ({
-            id: u._id.toString(),
-            username: u.username,
-            student_email: u.student_email,
-            profile_image: u.profile_image,
-            total_points: u.total_points ?? 0,
-            attended_events_count: u.attended_events?.length ?? 0,
-            joined_at: u.joined_at ?? null,
-        }));
+        // ===== 4) FORMAT RESPONSE =====
+        const formattedUsers = students.map((u) => {
+            const idStr = u._id.toString();
+            const attendedCount = attendanceMap.get(idStr) || 0;
+
+            return {
+                id: idStr,
+                username: u.username,
+                student_email: u.student_email,
+                profile_image: u.profile_image,
+                total_points: u.total_points ?? 0,
+                attended_events_count: attendedCount,       
+                joined_at: u.createdAt ?? null,      
+            };
+        });
 
         return res.json({
             success: true,
@@ -353,15 +391,7 @@ router.delete("/DeleteEvents/:eventId", async (req, res) => {
         await Bookmark.deleteMany({ event: eventId });
 
         // =========================
-        // 8) REMOVE FROM attended_events (only if you actually store this)
-        // =========================
-        // await User.updateMany(
-        //     { attended_events: eventId },
-        //     { $pull: { attended_events: eventId } }
-        // );
-
-        // =========================
-        // 9) DELETE EVENT LAST
+        // 8) DELETE EVENT LAST
         // =========================
         await Event.deleteOne({ _id: eventId });
 
@@ -455,6 +485,7 @@ router.post("/CreateEvents", async (req, res) => {
             "venue",
             "max_capacity",
             "points",
+            "image"
         ];
 
         for (const field of requiredFields) {
@@ -592,7 +623,7 @@ router.post("/CreateEvents", async (req, res) => {
         // =========================
         const capacityLocked = req.body.status !== "Available";
 
-        const image = req.body.image || "/events/EventImage1.png";
+        const image = req.body.image;
         const organiserImage = req.body.organiser_image || "/organiser/TP.png";
         const tpLocation = Boolean(req.body.TP_Location);
 

@@ -86,14 +86,6 @@ const userSchema = new mongoose.Schema(
 
         // Earned badges (reference + date)
         badges: [earnedBadgeSchema],
-
-        // Events the user has attended
-        attended_events: [
-            {
-                type: mongoose.Schema.Types.ObjectId,
-                ref: "Event",
-            },
-        ],
     },
     {
         timestamps: true,
