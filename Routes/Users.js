@@ -218,10 +218,7 @@ router.post("/Login_Organiser", async (req, res) => {
     }
 });
 
-/* =========================
-   3) ADMIN LOGIN
-   POST /User/Login-Admin
-   ========================= */
+
 /* =========================
    3) ADMIN LOGIN
    POST /Users/Login_Admin

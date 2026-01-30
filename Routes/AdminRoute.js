@@ -368,12 +368,12 @@ router.delete("/DeleteEvents/:eventId", async (req, res) => {
         // =========================
         if (uniqueUserIds.length > 0) {
             const notifDocs = uniqueUserIds.map((uid) => ({
-                user: uid,                 // uid is the ObjectId string
+                user: uid,             
                 type: "Event",
                 message: `The event "${event.title}" has been removed and is no longer available.`,
-                event: event._id,          // required because type === "Event"
+                event: event._id,         
                 is_read: false,
-                icon: "/notifications/calendar.png", // correct field name
+                icon: "/notifications/calendar.png",
             }));
 
             await Notification.insertMany(notifDocs, { ordered: false });
@@ -632,7 +632,7 @@ router.post("/CreateEvents", async (req, res) => {
         // =========================
         const created = await Event.create({
             title: String(req.body.title).trim(),
-            description: req.body.description, // keep HTML
+            description: req.body.description,
             school: req.body.school,
             category: req.body.category,
             type: req.body.type,
