@@ -7,7 +7,7 @@ const router = express.Router();
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
 /**
- * GET /Badges/My
+ * GET /Badges
  * Returns unlocked + locked badges for logged-in user
  */
 router.get("/", async (req, res) => {
@@ -21,7 +21,7 @@ router.get("/", async (req, res) => {
 
     const token = authHeader.split(" ")[1];
 
-    // 🔐 First: verify token
+    // First: verify token
     let payload;
     try {
         ({ payload } = await jwtVerify(token, secret));

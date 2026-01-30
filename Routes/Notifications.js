@@ -5,6 +5,7 @@ import Notification from "../Models/NotificationModel.js";
 import RegisteredEvent from "../Models/RegisteredEventModel.js";
 import Event from "../Models/EventsModel.js";
 import User from "../Models/UserModel.js";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
@@ -17,16 +18,63 @@ const secret = new TextEncoder().encode(process.env.JWT_SECRET);
    ====================================================== */
 router.get("/UnreadCount", async (req, res) => {
     try {
-        // JWT CHECK (INLINE)
+        // ===== JWT CHECK =====
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({ success: false });
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Authentication required",
+                unreadCount: 0,
+            });
         }
 
         const token = authHeader.split(" ")[1];
-        const { payload } = await jwtVerify(token, secret);
-        const userId = payload.user_id;
 
+        let payload;
+        try {
+            ({ payload } = await jwtVerify(token, secret));
+        } catch (err) {
+            console.error("Invalid or expired token (UnreadCount):", err);
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Invalid or expired token",
+                unreadCount: 0,
+            });
+        }
+
+        const userId = payload.user_id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Token missing user id",
+                unreadCount: 0,
+            });
+        }
+
+        // ===== USER + ROLE GATE (STUDENT ONLY) =====
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+                unreadCount: 0,
+            });
+        }
+
+        if (String(user.role).toUpperCase() !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+                unreadCount: 0,
+            });
+        }
+
+        // ===== MAIN LOGIC =====
         const unreadCount = await Notification.countDocuments({
             user: userId,
             is_read: false,
@@ -34,16 +82,20 @@ router.get("/UnreadCount", async (req, res) => {
 
         return res.json({
             success: true,
+            code: "UNREAD_COUNT_OK",
             unreadCount,
         });
     } catch (err) {
         console.error("Error getting unread count:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
+            message: "Failed to get unread notifications count",
             unreadCount: 0,
         });
     }
 });
+
 
 /* ======================================================
    2) GET INBOX NOTIFICATIONS
@@ -258,6 +310,7 @@ router.get("/Important", async (req, res) => {
 });
 
 
+// PATCH /Notifications/:id/NotificationsRead
 router.patch("/:id/NotificationsRead", async (req, res) => {
     try {
         // ===== JWT CHECK =====
@@ -276,7 +329,8 @@ router.patch("/:id/NotificationsRead", async (req, res) => {
         try {
             const verified = await jwtVerify(token, secret);
             payload = verified.payload;
-        } catch {
+        } catch (err) {
+            console.error("Invalid token (NotificationsRead):", err);
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
@@ -293,11 +347,36 @@ router.patch("/:id/NotificationsRead", async (req, res) => {
             });
         }
 
+        // ===== USER + ROLE GATE (STUDENT ONLY) =====
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        if (String(user.role).toUpperCase() !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
         // ===== UPDATE (ownership enforced in query) =====
         const notifId = req.params.id;
+        if (!notifId) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_REQUEST",
+                message: "Notification id is required",
+            });
+        }
 
         const updated = await Notification.findOneAndUpdate(
-            { _id: notifId, user: userId }, // ensures ownership
+            { _id: notifId, user: userId },
             { $set: { is_read: true } },
             { new: true }
         ).lean();
@@ -328,8 +407,9 @@ router.patch("/:id/NotificationsRead", async (req, res) => {
     }
 });
 
+
 // MARK ALL AS READ
-// PATCH /Notification/MarkAllRead
+// PATCH /Notifications/MarkAllRead
 router.patch("/MarkAllRead", async (req, res) => {
     try {
         // ===== JWT CHECK =====
@@ -348,7 +428,8 @@ router.patch("/MarkAllRead", async (req, res) => {
         try {
             const verified = await jwtVerify(token, secret);
             payload = verified.payload;
-        } catch {
+        } catch (err) {
+            console.error("Invalid token (MarkAllRead):", err);
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
@@ -365,13 +446,30 @@ router.patch("/MarkAllRead", async (req, res) => {
             });
         }
 
+        // ===== USER + ROLE GATE (STUDENT ONLY) =====
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        if (String(user.role).toUpperCase() !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
         // ===== UPDATE MANY =====
         const result = await Notification.updateMany(
             { user: userId, is_read: false },
             { $set: { is_read: true } }
         );
 
-        // result.modifiedCount tells how many were updated
         return res.json({
             success: true,
             code: "MARKED_ALL_READ",
@@ -386,6 +484,7 @@ router.patch("/MarkAllRead", async (req, res) => {
         });
     }
 });
+
 
 
 export default router;

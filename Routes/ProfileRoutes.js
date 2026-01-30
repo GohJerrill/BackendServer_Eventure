@@ -9,19 +9,6 @@ import Notification from "../Models/NotificationModel.js";
 const router = express.Router();
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
-/* ======================================================
-   Helper: Extract user from JWT
-   ====================================================== */
-// async function ValidateJWT(req) {
-//     const authHeader = req.headers.authorization;
-//     if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-
-//     const token = authHeader.split(" ")[1];
-//     const { payload } = await jwtVerify(token, secret);
-
-//     return User.findById(payload.user_id).lean();
-// }
-
 
 router.get("/", async (req, res) => {
     try {

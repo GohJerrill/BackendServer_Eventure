@@ -555,8 +555,6 @@ router.post("/CreateEvents", async (req, res) => {
 
         // =========================
         // 5) DATE RULES (NOW IS UTC)
-        // If you want "now" from SG perspective, compare against UTC is fine
-        // because startDate/endDate are now UTC-correct.
         // =========================
         const now = new Date();
 

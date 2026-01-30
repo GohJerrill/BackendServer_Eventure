@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import User from "../Models/UserModel.js";
 import dotenv from "dotenv";
+import mongoose from "mongoose";
 
 dotenv.config();
 
@@ -403,8 +404,8 @@ router.get("/Leaderboards", async (req, res) => {
 
         return res.json({
             success: true,
-            meId,          // for highlight if in list
-            me,            // for "Your rank" even if outside top50
+            meId,
+            me,
             top3,
             rest,
             allZeroPoints,
@@ -418,45 +419,84 @@ router.get("/Leaderboards", async (req, res) => {
 });
 
 
-
 /* =========================
-   5) GET USER BY ID
-   GET /User/:id
-   (used by RefreshCurrentUser)
+   GET /User/Refresh
+   Used by Navbar / RefreshCurrentUser
    ========================= */
 router.get("/Refresh", async (req, res) => {
+    const authHeader = req.headers.authorization;
+
+    // 1) Require Bearer token
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+            success: false,
+            code: "UNAUTHORIZED",
+            message: "Authentication required",
+        });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    // 2) Verify JWT in its own try/catch
+    let payload;
     try {
-        const authHeader = req.headers.authorization;
+        ({ payload } = await jwtVerify(token, secret));
+    } catch (err) {
+        console.error("Invalid or expired token in /User/Refresh:", err);
+        return res.status(401).json({
+            success: false,
+            code: "INVALID_TOKEN",
+            message: "Invalid or expired token",
+        });
+    }
 
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({
-                success: false,
-                message: "Authentication required",
-            });
-        }
+    const userId = payload?.user_id;
 
-        const token = authHeader.split(" ")[1];
-        const { payload } = await jwtVerify(token, secret);
+    // 3) Validate payload user_id
+    if (!userId || typeof userId !== "string") {
+        return res.status(401).json({
+            success: false,
+            code: "INVALID_PAYLOAD",
+            message: "Token missing or invalid user id",
+        });
+    }
 
-        const user = await User.findById(payload.user_id);
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({
+            success: false,
+            code: "BAD_USER_ID",
+            message: "Invalid user id",
+        });
+    }
+
+    // 4) Main DB logic
+    try {
+        // select only what you actually need, or let toClientUser handle stripping
+        const user = await User.findById(userId).lean();
+
         if (!user) {
+            // Treat as "session expired"
             return res.status(401).json({
                 success: false,
-                message: "Session expired",
+                code: "SESSION_EXPIRED",
+                message: "Session expired. Please login again.",
             });
         }
 
         return res.json({
             success: true,
+            code: "REFRESH_OK",
             user: toClientUser(user),
         });
     } catch (err) {
         console.error("Error in GET /User/Refresh:", err);
-        return res.status(401).json({
+        return res.status(500).json({
             success: false,
-            message: "Invalid token",
+            code: "SERVER_ERROR",
+            message: "Failed to refresh user",
         });
     }
 });
+
 
 export default router;

@@ -391,7 +391,6 @@ router.get("/Individual/:id", async (req, res) => {
     } catch (err) {
         console.error("Error fetching individual event:", err);
 
-        // OPTIONAL extra safety: CastError still becomes a clean response
         if (err?.name === "CastError") {
             return res.status(400).json({
                 success: false,
@@ -522,57 +521,76 @@ router.get("/CalendarMyEvents", async (req, res) => {
 
 /**
  * GET /Events/CalendarTodayEvents
- * Returns today's events 
+ * Returns today's events for the logged-in student
  */
 router.get("/CalendarTodayEvents", async (req, res) => {
-    const authHeader = req.headers.authorization;
-
-    // 1) Missing token → 401
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({
-            success: false,
-            message: "Authentication required",
-        });
-    }
-
-    const token = authHeader.split(" ")[1];
-
-    // 2) Verify JWT in its own try/catch
-    let payload;
     try {
-        ({ payload } = await jwtVerify(token, secret));
-    } catch (err) {
-        console.error("Invalid or expired token (CalendarTodayEvents):", err);
-        return res.status(401).json({
-            success: false,
-            message: "Invalid or expired token",
-        });
-    }
+        const authHeader = req.headers.authorization;
 
-    const userId = payload.user_id;
+        // 1) Missing token → 401
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Authentication required",
+            });
+        }
 
-    // 2.5) Get role (and gate)
-    const user = await User.findById(userId).select("role").lean();
+        const token = authHeader.split(" ")[1];
 
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            code: "USER_NOT_FOUND",
-            message: "User not found",
-        });
-    }
+        // 2) Verify JWT in its own try/catch
+        let payload;
+        try {
+            ({ payload } = await jwtVerify(token, secret));
+        } catch (err) {
+            console.error("Invalid or expired token (CalendarTodayEvents):", err);
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Invalid or expired token",
+            });
+        }
 
-    if (user.role !== "Student") {
-        return res.status(403).json({
-            success: false,
-            code: "FORBIDDEN",
-            message: "Students only",
-        });
-    }
+        const userId = payload?.user_id;
 
+        if (!userId || typeof userId !== "string") {
+            return res.status(401).json({
+                success: false,
+                code: "UNAUTHORIZED",
+                message: "Token missing or invalid user id",
+            });
+        }
 
-    // 3) Main logic
-    try {
+        // Optional but nice: ensure it’s a valid ObjectId
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_USER_ID",
+                message: "Invalid user id",
+            });
+        }
+
+        // 2.5) Get role (and gate)
+        const user = await User.findById(userId).select("role").lean();
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        const role = String(user.role || "").toUpperCase();
+        if (role !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
+        // 3) Main logic
         const registrations = await RegisteredEvent.find({
             user_id: userId,
         }).lean();
@@ -580,19 +598,22 @@ router.get("/CalendarTodayEvents", async (req, res) => {
         if (registrations.length === 0) {
             return res.json({
                 success: true,
+                code: "NO_EVENTS",
                 events: [],
             });
         }
 
-        const eventIds = registrations.map((r) => r.event_id.toString());
+        const eventIds = registrations
+            .map((r) => r.event_id?.toString())
+            .filter(Boolean);
+
         const events = await Event.find({
             _id: { $in: eventIds },
         }).lean();
 
-        // "Now" in server time (your dates are stored as Date so this is fine)
         const now = new Date();
 
-        // Start and end of *today*
+        // Start and end of *today* (server-local "today")
         const startOfToday = new Date(now);
         startOfToday.setHours(0, 0, 0, 0);
 
@@ -610,8 +631,7 @@ router.get("/CalendarTodayEvents", async (req, res) => {
                 const end = new Date(event.end_date);
 
                 // 1) Event overlaps today's date at all
-                const overlapsToday =
-                    start <= endOfToday && end >= startOfToday;
+                const overlapsToday = start <= endOfToday && end >= startOfToday;
 
                 // 2) Event has not completely ended yet
                 const notEnded = end >= now;
@@ -635,22 +655,27 @@ router.get("/CalendarTodayEvents", async (req, res) => {
 
         return res.json({
             success: true,
+            code: "TODAY_OK",
             events: todayEvents,
         });
     } catch (err) {
         console.error("Error fetching today calendar:", err);
         return res.status(500).json({
             success: false,
+            code: "SERVER_ERROR",
             message: "Cannot fetch today calendar",
         });
     }
-
 });
 
-// GET /Events/:eventId/RegistrationMe
+
+
+// GET /Events/:eventId/RegistrationUSER
 router.get("/:eventId/RegistrationUSER", async (req, res) => {
     try {
-        // ===== JWT AUTH =====
+        // =========================
+        // 1) JWT AUTH
+        // =========================
         const authHeader = req.headers.authorization;
         if (!authHeader?.startsWith("Bearer ")) {
             return res.status(401).json({
@@ -665,7 +690,8 @@ router.get("/:eventId/RegistrationUSER", async (req, res) => {
         let payload;
         try {
             ({ payload } = await jwtVerify(token, secret));
-        } catch {
+        } catch (err) {
+            console.error("Invalid or expired token (RegistrationUSER):", err);
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
@@ -673,17 +699,50 @@ router.get("/:eventId/RegistrationUSER", async (req, res) => {
             });
         }
 
-        const userId = payload.user_id;
-        if (!userId) {
+        const userId = payload?.user_id;
+
+        if (!userId || typeof userId !== "string") {
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
-                message: "Token missing user id",
+                message: "Token missing or invalid user id",
             });
         }
 
-        // ===== PARAM VALIDATION =====
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_USER_ID",
+                message: "Invalid user id",
+            });
+        }
+
+        // =========================
+        // 2) ROLE GATE (STUDENT ONLY)
+        // =========================
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        const role = String(user.role || "").toUpperCase();
+        if (role !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
+        // =========================
+        // 3) PARAM VALIDATION
+        // =========================
         const { eventId } = req.params;
+
         if (!eventId) {
             return res.status(400).json({
                 success: false,
@@ -692,7 +751,17 @@ router.get("/:eventId/RegistrationUSER", async (req, res) => {
             });
         }
 
-        // ===== FIND REGISTRATION =====
+        if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_EVENT_ID",
+                message: "Invalid event id",
+            });
+        }
+
+        // =========================
+        // 4) FIND REGISTRATION
+        // =========================
         const reg = await RegisteredEvent.findOne({
             user_id: userId,
             event_id: eventId,
@@ -701,19 +770,23 @@ router.get("/:eventId/RegistrationUSER", async (req, res) => {
         if (!reg) {
             return res.json({
                 success: true,
+                code: "NOT_REGISTERED",
                 registration: null,
             });
         }
 
+        const { _id, __v, ...rest } = reg;
+
         return res.json({
             success: true,
+            code: "REGISTERED_OK",
             registration: {
-                id: reg._id.toString(),
-                ...reg,
+                id: _id.toString(),
+                ...rest,
             },
         });
     } catch (err) {
-        console.error("Error in GET /Events/:eventId/RegistrationMe:", err);
+        console.error("Error in GET /Events/:eventId/RegistrationUSER:", err);
         return res.status(500).json({
             success: false,
             code: "SERVER_ERROR",
@@ -723,10 +796,13 @@ router.get("/:eventId/RegistrationUSER", async (req, res) => {
 });
 
 
+
 // DELETE /Events/:eventId/UnregisterEvent
 router.delete("/:eventId/UnregisterEvent", async (req, res) => {
     try {
-        // ===== JWT AUTH =====
+        // =========================
+        // 1) JWT AUTH
+        // =========================
         const authHeader = req.headers.authorization;
         if (!authHeader?.startsWith("Bearer ")) {
             return res.status(401).json({
@@ -749,17 +825,50 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
             });
         }
 
-        const userId = payload.user_id;
-        if (!userId) {
+        const userId = payload?.user_id;
+
+        if (!userId || typeof userId !== "string") {
             return res.status(401).json({
                 success: false,
                 code: "UNAUTHORIZED",
-                message: "Token missing user id",
+                message: "Token missing or invalid user id",
             });
         }
 
-        // ===== PARAM =====
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_USER_ID",
+                message: "Invalid user id",
+            });
+        }
+
+        // =========================
+        // 2) ROLE GATE (STUDENT ONLY)
+        // =========================
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        const role = String(user.role || "").toUpperCase();
+        if (role !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
+        // =========================
+        // 3) PARAM VALIDATION
+        // =========================
         const { eventId } = req.params;
+
         if (!eventId) {
             return res.status(400).json({
                 success: false,
@@ -768,7 +877,17 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
             });
         }
 
-        // ===== EVENT CHECK =====
+        if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            return res.status(400).json({
+                success: false,
+                code: "BAD_EVENT_ID",
+                message: "Invalid event id",
+            });
+        }
+
+        // =========================
+        // 4) EVENT CHECK
+        // =========================
         const event = await Event.findById(eventId).lean();
         if (!event) {
             return res.status(404).json({
@@ -786,7 +905,9 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
             });
         }
 
-        // ===== REGISTRATION CHECK =====
+        // =========================
+        // 5) REGISTRATION CHECK
+        // =========================
         const registration = await RegisteredEvent.findOne({
             user_id: userId,
             event_id: eventId,
@@ -808,19 +929,20 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
             });
         }
 
-        // ===== DELETE REGISTRATION =====
+        // =========================
+        // 6) DELETE REGISTRATION
+        // =========================
         await RegisteredEvent.deleteOne({ _id: registration._id });
 
-        // ===== RECOMPUTE ATTENDEES (TRUTH) =====
-        const attendeeCount = await RegisteredEvent.countDocuments({ event_id: eventId });
+        // =========================
+        // 7) RECOMPUTE ATTENDEES (TRUTH)
+        // =========================
+        const attendeeCount = await RegisteredEvent.countDocuments({
+            event_id: eventId,
+        });
 
-        // IMPORTANT: respect admin lock
         const capacityLocked = Boolean(event.capacity_locked);
 
-        // Auto-reopen ONLY if:
-        // - event is currently Unavailable
-        // - it was NOT manually locked by admin
-        // - and now below max capacity
         const shouldReopen =
             event.status === "Unavailable" &&
             !capacityLocked &&
@@ -836,7 +958,6 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
             },
             { new: true }
         ).lean();
-
 
         return res.json({
             success: true,
@@ -856,6 +977,7 @@ router.delete("/:eventId/UnregisterEvent", async (req, res) => {
         });
     }
 });
+
 
 
 router.post("/:id/Register", async (req, res) => {
@@ -895,6 +1017,25 @@ router.post("/:id/Register", async (req, res) => {
             });
         }
 
+        const user = await User.findById(userId).select("role").lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "USER_NOT_FOUND",
+                message: "User not found",
+            });
+        }
+
+        const role = String(user.role || "").toUpperCase();
+        if (role !== "STUDENT") {
+            return res.status(403).json({
+                success: false,
+                code: "FORBIDDEN",
+                message: "Students only",
+            });
+        }
+
+
         const eventId = req.params.id;
 
         await session.withTransaction(async () => {
@@ -919,7 +1060,7 @@ router.post("/:id/Register", async (req, res) => {
                 return;
             }
 
-            // Optional: stop registering once started
+            // Stop registering once started
             const now = new Date();
             if (event.start_date && now >= new Date(event.start_date)) {
                 res.status(409).json({
@@ -1022,7 +1163,7 @@ router.post("/:id/Register", async (req, res) => {
                 },
                 event: {
                     id: event._id.toString(),
-                    attendees: event.attendees,      // 👈 now from DB truth
+                    attendees: event.attendees,
                     status: event.status,
                     max_capacity: event.max_capacity,
                 },
@@ -1193,7 +1334,7 @@ router.get("/ApprovalDetails/:regId", async (req, res) => {
                         image: reg.event_id.image,
                         start_date: reg.event_id.start_date,
                         end_date: reg.event_id.end_date,
-                        status: reg.event_id.status, // <-- frontend uses this
+                        status: reg.event_id.status, 
                     },
 
                     user: {
