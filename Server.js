@@ -12,7 +12,6 @@ const app = express();
 import userRoutes from "./Routes/Users.js";
 import eventRoutes from "./Routes/Events.js";
 import bookmarkRoutes from "./Routes/Bookmarks.js";
-import registeredEventRoutes from "./Routes/RegisteredEvents.js";
 import rewardRoutes from "./Routes/Rewards.js";
 import badgeRoutes from "./Routes/Badges.js";
 import notificationRoutes from "./Routes/Notifications.js";
@@ -54,7 +53,6 @@ mongoose
 app.use("/User", userRoutes);
 app.use("/Events", eventRoutes);
 app.use("/Bookmarks", bookmarkRoutes);
-app.use("/Registrations", registeredEventRoutes);
 app.use("/Rewards", rewardRoutes);
 app.use("/Badges", badgeRoutes);
 app.use("/Notifications", notificationRoutes);

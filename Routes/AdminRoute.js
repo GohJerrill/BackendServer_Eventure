@@ -65,6 +65,10 @@ router.get("/DashboardStats", async (req, res) => {
     }
 });
 
+/* ======================================================
+   GET /Admin/Events
+   Admin-only to GET all EVENTS despite status or time
+   ====================================================== */
 router.get("/Events", async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
@@ -246,7 +250,6 @@ router.get("/EventsStatistics/:eventId", async (req, res) => {
                 id: reg._id.toString(),
                 student_email: u?.student_email ?? "Unknown",
                 username: u?.username ?? "Unknown",
-                date_registered: reg.date_registered ?? null,
                 turn_up: reg.turn_up ?? false,
                 scanned_at: reg.scanned_at ?? null,
                 createdAt: reg.createdAt ?? null,
@@ -625,8 +628,6 @@ router.post("/CreateEvents", async (req, res) => {
         const organiserImage = req.body.organiser_image || "/organiser/TP.png";
         const tpLocation = Boolean(req.body.TP_Location);
 
-        // Basic sanity for huge base64 (prevents 413 / giant docs)
-
         // =========================
         // 8) CREATE EVENT
         // =========================
@@ -678,7 +679,10 @@ router.post("/CreateEvents", async (req, res) => {
     }
 });
 
-// GET /Admin/AdminGetEVENTS/:eventId
+// ========================================================
+    // GET /Admin/AdminGetEVENTS/:eventId
+    // Used for the update event page to first GET than UPDATE
+// =========================================================
 router.get("/AdminGetEVENTS/:eventId", async (req, res) => {
     try {
         // =========================

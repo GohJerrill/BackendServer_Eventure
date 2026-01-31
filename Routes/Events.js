@@ -272,6 +272,7 @@ router.get("/", async (req, res) => {
     }
 });
 
+// GET /Events/Individual/{id}
 router.get("/Individual/:id", async (req, res) => {
     try {
         // ===== JWT CHECK =====
@@ -412,7 +413,7 @@ router.get("/Individual/:id", async (req, res) => {
 /**
  * GET /Events/CalendarMyEvents
  * Returns all events the logged-in user registered for
- */
+*/
 router.get("/CalendarMyEvents", async (req, res) => {
     const authHeader = req.headers.authorization;
 

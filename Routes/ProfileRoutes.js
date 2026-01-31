@@ -10,6 +10,8 @@ const router = express.Router();
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
 
+// GET /Profile
+// The GENERAL GET for the user profile
 router.get("/", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -90,7 +92,8 @@ router.get("/", async (req, res) => {
     }
 });
 
-
+// PUT /Profile
+// Allows the user to change name and profile photo
 router.put("/", async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
@@ -194,7 +197,8 @@ router.put("/", async (req, res) => {
     }
 });
 
-
+// GET /Profile/Rank
+// To get the Rank of the user
 router.get("/Rank", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -271,7 +275,8 @@ router.get("/Rank", async (req, res) => {
 });
 
 
-
+// GET /Profile/Badges
+// To get the user badges EHHEEHH
 router.get("/Badges", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -361,6 +366,7 @@ router.get("/Badges", async (req, res) => {
     }
 });
 
+// GET /Profile/PastEvents
 router.get("/PastEvents", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -414,7 +420,7 @@ router.get("/PastEvents", async (req, res) => {
             });
         }
 
-        // 1) attended registrations
+        // ===== 1) ATTENDED REGISTRATIONS =====
         const regs = await RegisteredEvent.find({
             user_id: user._id,
             turn_up: true,
@@ -423,15 +429,19 @@ router.get("/PastEvents", async (req, res) => {
             .lean();
 
         if (regs.length === 0) {
+            // keep response shape as plain array like before
             return res.json([]);
         }
 
         const eventIds = regs.map((r) => r.event_id);
 
-        // 2) fetch completed/cancelled events only
+        // ===== 2) FETCH COMPLETED/CANCELLED EVENTS THAT HAVE ENDED =====
+        const now = new Date();
+
         const events = await Event.find({
             _id: { $in: eventIds },
             status: { $in: ["Completed", "Cancelled"] },
+            end_date: { $lt: now },             // <-- time-based past
         })
             .sort({ end_date: -1 })
             .lean();
@@ -453,6 +463,7 @@ router.get("/PastEvents", async (req, res) => {
 });
 
 
+// GET /Profile/Categories
 router.get("/Categories", async (req, res) => {
     try {
         // ===== JWT CHECK (INLINE) =====
@@ -547,7 +558,7 @@ router.get("/Categories", async (req, res) => {
 });
 
 
-
+// GET /Profile/VerifyRole
 router.get("/VerifyRole", async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
