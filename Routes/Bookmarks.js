@@ -10,7 +10,7 @@ const router = express.Router();
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
 /* ======================================================
-   GET /Bookmarks/My
+   GET /Bookmarks
    Returns bookmarked events for logged-in user
    ====================================================== */
 router.get("/", async (req, res) => {

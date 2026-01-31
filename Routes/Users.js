@@ -254,7 +254,7 @@ router.post("/Login_Admin", async (req, res) => {
         });
 
         if (!user) {
-            // generic so we don't leak if email exists
+
             return res.status(401).json({
                 success: false,
                 code: "INVALID_CREDENTIALS",
@@ -414,86 +414,5 @@ router.get("/Leaderboards", async (req, res) => {
         return res.status(500).json({ success: false, message: "Server error" });
     }
 });
-
-
-/* =========================
-   GET /User/Refresh
-   Used by Navbar / RefreshCurrentUser
-   ========================= */
-router.get("/Refresh", async (req, res) => {
-    const authHeader = req.headers.authorization;
-
-    // 1) Require Bearer token
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({
-            success: false,
-            code: "UNAUTHORIZED",
-            message: "Authentication required",
-        });
-    }
-
-    const token = authHeader.split(" ")[1];
-
-    // 2) Verify JWT in its own try/catch
-    let payload;
-    try {
-        ({ payload } = await jwtVerify(token, secret));
-    } catch (err) {
-        console.error("Invalid or expired token in /User/Refresh:", err);
-        return res.status(401).json({
-            success: false,
-            code: "INVALID_TOKEN",
-            message: "Invalid or expired token",
-        });
-    }
-
-    const userId = payload?.user_id;
-
-    // 3) Validate payload user_id
-    if (!userId || typeof userId !== "string") {
-        return res.status(401).json({
-            success: false,
-            code: "INVALID_PAYLOAD",
-            message: "Token missing or invalid user id",
-        });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-            success: false,
-            code: "BAD_USER_ID",
-            message: "Invalid user id",
-        });
-    }
-
-    // 4) Main DB logic
-    try {
-        // select only what you actually need, or let toClientUser handle stripping
-        const user = await User.findById(userId).lean();
-
-        if (!user) {
-            // Treat as "session expired"
-            return res.status(401).json({
-                success: false,
-                code: "SESSION_EXPIRED",
-                message: "Session expired. Please login again.",
-            });
-        }
-
-        return res.json({
-            success: true,
-            code: "REFRESH_OK",
-            user: toClientUser(user),
-        });
-    } catch (err) {
-        console.error("Error in GET /User/Refresh:", err);
-        return res.status(500).json({
-            success: false,
-            code: "SERVER_ERROR",
-            message: "Failed to refresh user",
-        });
-    }
-});
-
 
 export default router;
