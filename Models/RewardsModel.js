@@ -1,4 +1,7 @@
 // models/Reward.js
+/* This is the rewards model collection for users to use their points and spent it here. When users spent their points, the backend
+will first check if the user has enough points. If the user has enough points the redemption go through, emailing the user of the 
+reward description and deducting the right points away from the user.*/
 import mongoose from "mongoose";
 
 const rewardSchema = new mongoose.Schema(

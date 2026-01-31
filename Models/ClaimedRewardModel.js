@@ -1,4 +1,7 @@
 // models/ClaimedReward.js
+/*
+This is the history log for the user to view where his claimed rewards has gone to. Its a history page to display every reward redeemed.
+*/
 import mongoose from "mongoose";
 
 const claimedRewardSchema = new mongoose.Schema(

@@ -70,12 +70,23 @@ const userSchema = new mongoose.Schema(
         },
 
         // Current points (e.g. this month / active)
+        /*Even  though this can be placed in a seperate collection I have decided to place it here for clarity and
+        transparency. The users can be able to view which events they joined which in turn earn points, and which
+        rewards they redeem in the claimed rewards history field. However there is some limitations of course
+        this is not a full ledger and audit trail, however a points log is not needed in our application and would cost issues.
+        */
         points: {
             type: Number,
             default: 0,
             min: 0,
             max: 5000,
         },
+
+        /* 
+        I have added a cap of 5000, because I dont want the user to abuse the system by hoarding a tons of points, redeeming
+        everything which can break and make the system useless.
+
+        */
 
         // Lifetime or total points (based on your logic)
         total_points: {

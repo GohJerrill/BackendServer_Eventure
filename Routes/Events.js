@@ -1334,7 +1334,7 @@ router.get("/ApprovalDetails/:regId", async (req, res) => {
                         image: reg.event_id.image,
                         start_date: reg.event_id.start_date,
                         end_date: reg.event_id.end_date,
-                        status: reg.event_id.status, 
+                        status: reg.event_id.status,
                     },
 
                     user: {
